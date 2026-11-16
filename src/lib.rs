@@ -2,16 +2,15 @@
 //!
 //! A simple, clear chess engine written in Rust.
 //!
-//! This is `v0.0.1a01`: the foundation. Core value types, the board
-//! representation, and strict FEN parsing/serialization. Move generation,
-//! search, and UCI arrive in later alpha builds.
+//! This is `v0.0.1a02`: attack detection and pseudo-legal move generation.
+//! Make/unmake, Zobrist hashing, and perft arrive in `v0.0.1a03`.
 //!
 //! ```
 //! use aspet::Board;
 //!
 //! let board = Board::start_position();
-//! assert_eq!(board.to_fen(), aspet::board::STARTPOS_FEN);
-//! assert!(board.is_consistent());
+//! let moves = board.generate_moves();
+//! assert_eq!(moves.len(), 20);
 //! ```
 
 #![forbid(unsafe_code)]
@@ -19,9 +18,12 @@
 
 pub mod board;
 pub mod fen;
+pub mod movegen;
 pub mod types;
 pub mod version;
 
 pub use board::Board;
 pub use fen::FenError;
-pub use types::{Bitboard, CastlingRights, Color, Piece, PieceKind, Square};
+pub use types::{
+    Bitboard, CastlingRights, Color, Move, MoveFlag, MoveList, Piece, PieceKind, Square,
+};

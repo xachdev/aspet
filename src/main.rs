@@ -18,6 +18,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("fen") => show(&args[1..].join(" ")),
+        Some("moves") => show_moves(&args[1..].join(" ")),
         None => show(STARTPOS_FEN),
         Some(other) => {
             eprintln!("unknown command {other:?}\n");
@@ -40,12 +41,30 @@ fn show(fen: &str) -> ExitCode {
     }
 }
 
+fn show_moves(fen: &str) -> ExitCode {
+    match Board::from_fen(fen) {
+        Ok(board) => {
+            let moves = board.generate_moves();
+            println!("{} pseudo-legal moves:", moves.len());
+            for mv in moves.iter() {
+                println!("{mv}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("error: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn print_help() {
     println!("{} — a simple, clear chess engine", version::full_name());
     println!();
     println!("Usage:");
     println!("  aspet              show the starting position");
     println!("  aspet fen <FEN>    parse and display a FEN position");
+    println!("  aspet moves <FEN>  generate pseudo-legal moves");
     println!("  aspet --version    print version");
     println!("  aspet --help       print this help");
 }

@@ -4,7 +4,8 @@ use std::fmt;
 use std::str::FromStr;
 
 use crate::fen::{self, FenError};
-use crate::types::{Bitboard, CastlingRights, Color, Piece, PieceKind, Square};
+use crate::movegen;
+use crate::types::{Bitboard, CastlingRights, Color, MoveList, Piece, PieceKind, Square};
 
 /// FEN of the standard starting position.
 pub const STARTPOS_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -44,6 +45,24 @@ impl Board {
     /// Serialize to a canonical FEN string.
     pub fn to_fen(&self) -> String {
         fen::write(self)
+    }
+
+    /// True if `sq` is attacked by `by`.
+    pub fn is_square_attacked(&self, sq: Square, by: Color) -> bool {
+        movegen::is_square_attacked(self, sq, by)
+    }
+
+    /// True if `color`'s king is in check.
+    pub fn is_in_check(&self, color: Color) -> bool {
+        movegen::in_check(self, color)
+    }
+
+    /// Generate pseudo-legal moves for the side to move.
+    ///
+    /// These may leave mover's king in check; legal filtering arrives.
+    /// in `v0.0.1a03`.
+    pub fn generate_moves(&self) -> MoveList {
+        movegen::generate_moves(self)
     }
 
     /// The piece on `sq`, if any.
