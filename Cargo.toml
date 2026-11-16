@@ -1,0 +1,17 @@
+[package]
+name = "aspet"
+version = "0.0.1-a01"
+edition = "2021"
+rust-version = "1.74"
+authors = ["Zaqar Hakobyan"]
+description = "A simple, clear chess engine written in Rust."
+license = "GPL-3.0-or-later"
+repository = "https://github.com/codewithzaqar/aspet"
+keywords = ["chess", "engine", "uci"]
+categories = ["games"]
+
+[dependencies]
+
+[profile.release]
+lto = true
+codegen-units = 1
