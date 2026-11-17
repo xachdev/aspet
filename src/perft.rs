@@ -76,7 +76,8 @@ pub fn perft_checked(board: &mut Board, depth: u32) -> u64 {
         nodes += perft_checked(board, depth - 1);
         board.unmake_move(mv, undo);
         assert_eq!(
-            *board, snapshot,
+            *board,
+            snapshot,
             "unmake mismatch after {mv}: {}",
             snapshot.to_fen()
         );
