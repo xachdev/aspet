@@ -52,6 +52,21 @@ fn check_depth(depth: u32) {
     }
 }
 
+use aspet::perft::perft_checked;
+
+#[test]
+fn perft_checked_kiwipete_depth_3() {
+    let mut board = Board::from_fen(POSITIONS[1].1).unwrap();
+    assert_eq!(perft_checked(&mut board, 3), 97862);
+}
+
+#[test]
+#[ignore]
+fn perft_checked_kiwipete_depth_4() {
+    let mut board = Board::from_fen(POSITIONS[1].1).unwrap();
+    assert_eq!(perft_checked(&mut board, 4), 4085603);
+}
+
 #[test]
 fn perft_depth_1_to_3() {
     for depth in 1..=3 {
