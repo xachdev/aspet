@@ -2,15 +2,14 @@
 //!
 //! A simple, clear chess engine written in Rust.
 //!
-//! This is `v0.0.1a02`: attack detection and pseudo-legal move generation.
-//! Make/unmake, Zobrist hashing, and perft arrive in `v0.0.1a03`.
+//! This is `v0.0.1a03`: make/unmake, Zobrist hashing, legal move
+//! filtering, and perft. UCI arrives in `v0.0.1a04`.
 //!
 //! ```
 //! use aspet::Board;
 //!
-//! let board = Board::start_position();
-//! let moves = board.generate_moves();
-//! assert_eq!(moves.len(), 20);
+//! let mut board = Board::start_position();
+//! assert_eq!(aspet::perft::perft(&mut board, 3), 8902);
 //! ```
 
 #![forbid(unsafe_code)]
@@ -19,10 +18,12 @@
 pub mod board;
 pub mod fen;
 pub mod movegen;
+pub mod perft;
 pub mod types;
 pub mod version;
+pub mod zobrist;
 
-pub use board::Board;
+pub use board::{Board, Undo};
 pub use fen::FenError;
 pub use types::{
     Bitboard, CastlingRights, Color, Move, MoveFlag, MoveList, Piece, PieceKind, Square,

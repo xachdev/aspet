@@ -1,6 +1,6 @@
 [package]
 name = "aspet"
-version = "0.0.1-a02"
+version = "0.0.1-a03"
 edition = "2021"
 rust-version = "1.74"
 authors = ["Zaqar Hakobyan"]

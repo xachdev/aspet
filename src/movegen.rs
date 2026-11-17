@@ -354,6 +354,26 @@ fn generate_castling(
     }
 }
 
+/// Generate legal moves for the side to move.
+///
+/// Simple and obviouslt correct: make each pseudo-legal move, keep it.
+/// only if the mover's king is not in check, then unmake.
+pub fn generate_legal_moves(board: &mut Board) -> MoveList {
+    let pseudo = generate_moves(board);
+    let mut legal = MoveList::new();
+    let us = board.side_to_move();
+
+    for mv in pseudo.iter().copied() {
+        let undo = board.make_move(mv);
+        if !in_check(board, us) {
+            legal.push(mv);
+        }
+        board.unmake_move(mv, undo);
+    }
+
+    legal
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

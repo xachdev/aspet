@@ -1,7 +1,7 @@
 //! Castling rights as a small flag set.
 
 use std::fmt;
-use std::ops::{BitOr, BitOrAssign};
+use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign};
 
 /// Which castlings are still allowed: four independent flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
@@ -67,6 +67,17 @@ impl CastlingRights {
         }
         Some(rights)
     }
+
+    /// Raw flag bits, 0..15.
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// Create-internal constructor from eaw bits.
+    pub(crate) const fn from_bits(bits: u8) -> CastlingRights {
+        debug_assert!(bits < 16);
+        CastlingRights(bits)
+    }
 }
 
 impl BitOr for CastlingRights {
@@ -79,6 +90,19 @@ impl BitOr for CastlingRights {
 impl BitOrAssign for CastlingRights {
     fn bitor_assign(&mut self, rhs: CastlingRights) {
         self.0 |= rhs.0;
+    }
+}
+
+impl BitAnd for CastlingRights {
+    type Output = CastlingRights;
+    fn bitand(self, rhs: CastlingRights) -> CastlingRights {
+        CastlingRights(self.0 & rhs.0)
+    }
+}
+
+impl BitAndAssign for CastlingRights {
+    fn bitand_assign(&mut self, rhs: CastlingRights) {
+        self.0 &= rhs.0;
     }
 }
 

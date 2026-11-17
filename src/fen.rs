@@ -162,6 +162,7 @@ pub fn parse(fen: &str) -> Result<Board, FenError> {
     }
 
     validate(&board)?;
+    board.key = board.compute_key();
     Ok(board)
 }
 

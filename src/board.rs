@@ -5,20 +5,57 @@ use std::str::FromStr;
 
 use crate::fen::{self, FenError};
 use crate::movegen;
-use crate::types::{Bitboard, CastlingRights, Color, MoveList, Piece, PieceKind, Square};
+use crate::types::{
+    Bitboard, CastlingRights, Color, Move, MoveFlag, MoveList, Piece, PieceKind, Square,
+};
+use crate::zobrist;
 
 /// FEN of the standard starting position.
 pub const STARTPOS_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+/// Rights retained after a piece moves from/to each square.
+/// Moving a king clears both rights; moving a rook or capturing on a
+/// corner clears that side's right.
+const CASTLE_MASK: [CastlingRights; 64] = build_castle_masks();
+
+const fn build_castle_masks() -> [CastlingRights; 64] {
+    let mut m = [CastlingRights::ALL; 64];
+    m[0] = CastlingRights::from_bits(0b1101); // a1: white queenside
+    m[4] = CastlingRights::from_bits(0b1100); // e1: white both
+    m[7] = CastlingRights::from_bits(0b1110); // h1: white kingside
+    m[56] = CastlingRights::from_bits(0b0111); // a8: black queenside
+    m[60] = CastlingRights::from_bits(0b0011); // e8: black both
+    m[63] = CastlingRights::from_bits(0b1011); // h8: black kingside
+    m
+}
+
+/// Rook source/destination for a castling move.
+fn rook_squares(us: Color, flag: MoveFlag) -> (Square, Square) {
+    let rank = if us == Color::White { 0u8 } else { 7u8 };
+    if flag == MoveFlag::KingCastle {
+        (
+            Square::from_index(rank * 8 + 7),
+            Square::from_index(rank * 8 + 5),
+        )
+    } else {
+        (
+            Square::from_index(rank * 8),
+            Square::from_index(rank * 8 + 3),
+        )
+    }
+}
 
 /// A chess position.
 ///
 /// Hybrid representation:
 /// - 12 piece bitboards + 2 color occupancies for fast set operations,
-/// - a 64-entry mailbox for O(1) "what is on this square?".
+/// - a 64-entry mailbox for O(1) "what is on this square?",
+/// - an incremental Zobrist key and a key history for repetition detection.
 ///
-/// Invariant: both views always agree — see [`Board::is_consistent`].
-/// Boards can only be constructed through validated FEN parsing, so
-/// every `Board` has exactly one king per side and no pawns on back ranks.
+/// Invariant: the bitboards, mailbox, and key always agree — see
+/// [`Board::is_consistent`]. Boards can only be constructed through
+/// validated FEN parsing, so every `Board` has exactly one king per side
+/// and no pawns on back ranks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Board {
     pub(crate) pieces: [Bitboard; Piece::COUNT],
@@ -29,6 +66,8 @@ pub struct Board {
     pub(crate) en_passant: Option<Square>,
     pub(crate) halfmove_clock: u16,
     pub(crate) fullmove_number: u16,
+    pub(crate) key: u64,
+    pub(crate) history: Vec<u64>,
 }
 
 impl Board {
@@ -45,24 +84,6 @@ impl Board {
     /// Serialize to a canonical FEN string.
     pub fn to_fen(&self) -> String {
         fen::write(self)
-    }
-
-    /// True if `sq` is attacked by `by`.
-    pub fn is_square_attacked(&self, sq: Square, by: Color) -> bool {
-        movegen::is_square_attacked(self, sq, by)
-    }
-
-    /// True if `color`'s king is in check.
-    pub fn is_in_check(&self, color: Color) -> bool {
-        movegen::in_check(self, color)
-    }
-
-    /// Generate pseudo-legal moves for the side to move.
-    ///
-    /// These may leave mover's king in check; legal filtering arrives.
-    /// in `v0.0.1a03`.
-    pub fn generate_moves(&self) -> MoveList {
-        movegen::generate_moves(self)
     }
 
     /// The piece on `sq`, if any.
@@ -117,7 +138,181 @@ impl Board {
             .expect("validated board: exactly one king per side")
     }
 
-    /// Check that the bitboards and the mailbox agree.
+    /// Current Zobrist key.
+    pub fn key(&self) -> u64 {
+        self.key
+    }
+
+    /// Number of times the current position occurred earlier in the game.
+    pub fn repetitions(&self) -> usize {
+        self.history.iter().filter(|&&k| k == self.key).count()
+    }
+
+    /// True if the current position occurred at least once before.
+    pub fn is_repetition(&self) -> bool {
+        self.repetitions() >= 1
+    }
+
+    /// True if the current position occurred at least twice before (threefold).
+    pub fn is_threefold_repetition(&self) -> bool {
+        self.repetitions() >= 2
+    }
+
+    /// True if `sq` is attacked by `by`.
+    pub fn is_square_attacked(&self, sq: Square, by: Color) -> bool {
+        movegen::is_square_attacked(self, sq, by)
+    }
+
+    /// True if `color`'s king is in check.
+    pub fn is_in_check(&self, color: Color) -> bool {
+        movegen::in_check(self, color)
+    }
+
+    /// Generate pseudo-legal moves for the side to move.
+    ///
+    /// These may leave the mover's king in check; use
+    /// [`Board::generate_legal_moves`] for search and perft.
+    pub fn generate_moves(&self) -> MoveList {
+        movegen::generate_moves(self)
+    }
+
+    /// Generate legal moves for the side to move.
+    pub fn generate_legal_moves(&mut self) -> MoveList {
+        movegen::generate_legal_moves(self)
+    }
+
+    /// Apply a move, returning the state needed to undo it.
+    ///
+    /// Works for any pseudo-legal move; legality is checked separately.
+    pub fn make_move(&mut self, mv: Move) -> Undo {
+        let from = mv.from_square();
+        let to = mv.to_square();
+        let flag = mv.flag();
+        let us = self.side_to_move;
+        let piece = self.mailbox[from.index()].expect("move starts on an occupied square");
+        debug_assert_eq!(piece.color, us);
+
+        let mut undo = Undo {
+            captured: None,
+            castling: self.castling,
+            en_passant: self.en_passant,
+            halfmove_clock: self.halfmove_clock,
+            key: self.key,
+        };
+        self.history.push(self.key);
+
+        // Remove old castling / en passant key components.
+        self.key ^= zobrist::castling(self.castling);
+        if let Some(ep) = self.en_passant {
+            self.key ^= zobrist::en_passant(ep.file());
+        }
+
+        // Capture. En passant captures the pawn behind the target square.
+        if flag.is_capture() {
+            let captured_sq = if flag.is_en_passant() {
+                let idx = if us == Color::White {
+                    to.index() - 8
+                } else {
+                    to.index() + 8
+                };
+                Square::from_index(idx as u8)
+            } else {
+                to
+            };
+            let captured = self.remove_piece(captured_sq);
+            undo.captured = Some((captured, captured_sq));
+        }
+
+        // Move the piece; promotions replace the pawn.
+        self.remove_piece(from);
+        let placed = match flag.promotion_kind() {
+            Some(kind) => Piece::new(us, kind),
+            None => piece,
+        };
+        self.add_piece(to, placed);
+
+        // Castling also moves the rook.
+        if flag.is_castling() {
+            let (rook_from, rook_to) = rook_squares(us, flag);
+            let rook = self.remove_piece(rook_from);
+            self.add_piece(rook_to, rook);
+        }
+
+        // Castling rights: king/rook moves and captures on corners.
+        self.castling &= CASTLE_MASK[from.index()] & CASTLE_MASK[to.index()];
+        self.key ^= zobrist::castling(self.castling);
+
+        // En passant target exists only after a double push.
+        self.en_passant = if flag == MoveFlag::DoublePush {
+            let idx = if us == Color::White {
+                from.index() + 8
+            } else {
+                from.index() - 8
+            };
+            Some(Square::from_index(idx as u8))
+        } else {
+            None
+        };
+        if let Some(ep) = self.en_passant {
+            self.key ^= zobrist::en_passant(ep.file());
+        }
+
+        // Clocks and side to move.
+        self.halfmove_clock = if piece.kind == PieceKind::Pawn || flag.is_capture() {
+            0
+        } else {
+            self.halfmove_clock + 1
+        };
+        if us == Color::Black {
+            self.fullmove_number += 1;
+        }
+        self.side_to_move = us.opposite();
+        self.key ^= zobrist::SIDE;
+
+        undo
+    }
+
+    /// Undo a move using the token returned by [`Board::make_move`].
+    pub fn unmake_move(&mut self, mv: Move, undo: Undo) {
+        let from = mv.from_square();
+        let to = mv.to_square();
+        let flag = mv.flag();
+
+        self.side_to_move = self.side_to_move.opposite();
+        let us = self.side_to_move;
+        if us == Color::Black {
+            self.fullmove_number -= 1;
+        }
+
+        // Move the piece back, undoing any promotion.
+        let moved = self.remove_piece(to);
+        let original = if flag.is_promotion() {
+            Piece::new(us, PieceKind::Pawn)
+        } else {
+            moved
+        };
+        self.add_piece(from, original);
+
+        // Castling rook back.
+        if flag.is_castling() {
+            let (rook_from, rook_to) = rook_squares(us, flag);
+            let rook = self.remove_piece(rook_to);
+            self.add_piece(rook_from, rook);
+        }
+
+        // Restore the captured piece.
+        if let Some((captured, sq)) = undo.captured {
+            self.add_piece(sq, captured);
+        }
+
+        self.castling = undo.castling;
+        self.en_passant = undo.en_passant;
+        self.halfmove_clock = undo.halfmove_clock;
+        self.key = undo.key;
+        self.history.pop();
+    }
+
+    /// Check that the bitboards, mailbox, and Zobrist key agree.
     /// Used by tests now, and by fuzz targets in `v0.0.1b01`.
     pub fn is_consistent(&self) -> bool {
         let mut rebuilt = [Bitboard::EMPTY; Piece::COUNT];
@@ -128,7 +323,7 @@ impl Board {
                 occ[p.color.index()].insert(sq);
             }
         }
-        rebuilt == self.pieces && occ == self.occupied
+        rebuilt == self.pieces && occ == self.occupied && self.key == self.compute_key()
     }
 
     /// Human-readable multi-line view. `Display` itself writes the FEN.
@@ -147,16 +342,67 @@ impl Board {
             en_passant: None,
             halfmove_clock: 0,
             fullmove_number: 1,
+            key: 0,
+            history: Vec::new(),
         }
     }
 
     /// Place a piece on an empty square, keeping both views in sync.
+    /// Does not touch the hash; the FEN parser computes it at the end.
     pub(crate) fn place(&mut self, sq: Square, piece: Piece) {
         debug_assert!(self.mailbox[sq.index()].is_none());
         self.mailbox[sq.index()] = Some(piece);
         self.pieces[piece.index()].insert(sq);
         self.occupied[piece.color.index()].insert(sq);
     }
+
+    /// Recompute the Zobrist key from scratch (used by FEN parsing and tests).
+    pub(crate) fn compute_key(&self) -> u64 {
+        let mut key = 0u64;
+        for sq in Square::all() {
+            if let Some(p) = self.mailbox[sq.index()] {
+                key ^= zobrist::piece_square(p, sq);
+            }
+        }
+        key ^= zobrist::castling(self.castling);
+        if let Some(ep) = self.en_passant {
+            key ^= zobrist::en_passant(ep.file());
+        }
+        if self.side_to_move == Color::Black {
+            key ^= zobrist::SIDE;
+        }
+        key
+    }
+
+    /// Place a piece and update the hash.
+    fn add_piece(&mut self, sq: Square, piece: Piece) {
+        self.place(sq, piece);
+        self.key ^= zobrist::piece_square(piece, sq);
+    }
+
+    /// Remove a piece and update the hash.
+    fn remove_piece(&mut self, sq: Square) -> Piece {
+        let piece = self.mailbox[sq.index()]
+            .take()
+            .expect("remove from occupied square");
+        self.pieces[piece.index()].remove(sq);
+        self.occupied[piece.color.index()].remove(sq);
+        self.key ^= zobrist::piece_square(piece, sq);
+        piece
+    }
+}
+
+/// Irreversible state saved by [`Board::make_move`].
+///
+/// Must be passed back to [`Board::unmake_move`] for the same move.
+/// Dropping it without unmaking leaves the board in the moved state.
+#[derive(Debug, Clone)]
+pub struct Undo {
+    captured: Option<(Piece, Square)>,
+    castling: CastlingRights,
+    en_passant: Option<Square>,
+    halfmove_clock: u16,
+    key: u64,
 }
 
 impl FromStr for Board {
@@ -250,6 +496,7 @@ mod tests {
         assert_eq!(b.en_passant(), None);
         assert_eq!(b.halfmove_clock(), 0);
         assert_eq!(b.fullmove_number(), 1);
+        assert!(b.is_consistent());
     }
 
     #[test]

@@ -25,8 +25,8 @@ mod tests {
 
     #[test]
     fn cargo_and_tag_versions_agree() {
-        assert_eq!(SEMVER, "0.0.1-a02");
-        assert_eq!(short(), "0.0.1a02");
-        assert_eq!(full_name(), "Aspet 0.0.1a02");
+        assert_eq!(SEMVER, "0.0.1-a03");
+        assert_eq!(short(), "0.0.1a03");
+        assert_eq!(full_name(), "Aspet 0.0.1a03");
     }
 }
