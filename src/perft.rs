@@ -51,7 +51,8 @@ pub fn perft_checked(board: &mut Board, depth: u32) -> u64 {
     let snapshot = board.clone();
     let moves = generate_legal_moves(board);
     assert_eq!(
-        *board, snapshot,
+        *board,
+        snapshot,
         "movegen left the board changed: {}",
         snapshot.to_fen()
     );
@@ -76,7 +77,8 @@ pub fn perft_checked(board: &mut Board, depth: u32) -> u64 {
         nodes += perft_checked(board, depth - 1);
         board.unmake_move(mv, undo);
         assert_eq!(
-            *board, snapshot,
+            *board,
+            snapshot,
             "unmake mismatch after {mv}: {}",
             snapshot.to_fen()
         );
