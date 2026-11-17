@@ -23,6 +23,7 @@ fn main() -> ExitCode {
         Some("moves") => show_moves(&args[1..].join(" ")),
         Some("perft") => run_perft(&args[1..]),
         Some("divide") => run_divide(&args[1..]),
+        Some("makefen") => show_make_fen(&args[1..].join(" ")),
         None => show(STARTPOS_FEN),
         Some(other) => {
             eprintln!("unknown command {other:?}\n");
@@ -53,6 +54,24 @@ fn show_moves(fen: &str) -> ExitCode {
             println!("{} legal moves:", moves.len());
             for mv in moves.iter() {
                 println!("{mv}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("error: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn show_make_fen(fen: &str) -> ExitCode {
+    match Board::from_fen(fen) {
+        Ok(mut board) => {
+            let moves = board.generate_legal_moves();
+            for mv in moves.iter().copied() {
+                let undo = board.make_move(mv);
+                println!("{mv} {}", board.to_fen());
+                board.unmake_move(mv, undo);
             }
             ExitCode::SUCCESS
         }
